@@ -3,6 +3,7 @@ module github.com/segmentio/kafka-go
 go 1.15
 
 require (
+	github.com/aws/aws-sdk-go v1.55.7
 	github.com/klauspost/compress v1.15.9
 	github.com/pierrec/lz4/v4 v4.1.15
 	github.com/stretchr/testify v1.8.0

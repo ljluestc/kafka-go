@@ -64,16 +64,17 @@ type Reader struct {
 	msgs chan readerMessage
 
 	// mutable fields of the reader (synchronized on the mutex)
-	mutex   sync.Mutex
-	join    sync.WaitGroup
-	cancel  context.CancelFunc
-	stop    context.CancelFunc
-	done    chan struct{}
-	commits chan commitRequest
-	version int64 // version holds the generation of the spawned readers
-	offset  int64
-	lag     int64
-	closed  bool
+	mutex       sync.Mutex
+	join        sync.WaitGroup
+	cancel      context.CancelFunc
+	stop        context.CancelFunc
+	done        chan struct{}
+	commits     chan commitRequest
+	version     int64 // version holds the generation of the spawned readers
+	offset      int64
+	lag         int64
+	closed      bool
+	lastMessage Message // Add this field to fix the undefined error
 
 	// Without a group subscription (when Reader.config.GroupID == ""),
 	// when errors occur, the Reader gets a synthetic readerMessage with
@@ -755,12 +756,21 @@ func (r *Reader) Config() ReaderConfig {
 // Close closes the stream, preventing the program from reading any more
 // messages from it.
 func (r *Reader) Close() error {
-	atomic.StoreUint32(&r.once, 1)
+	if atomic.SwapUint32(&r.once, 1) != 0 {
+		return nil
+	}
 
 	r.mutex.Lock()
 	closed := r.closed
 	r.closed = true
 	r.mutex.Unlock()
+
+	// Commit the last message if it exists and using consumer groups
+	if !r.lastMessage.IsEmpty() && r.useConsumerGroup() { // Use the helper method
+		if err := r.CommitMessages(r.stctx, r.lastMessage); err != nil {
+			return fmt.Errorf("committing last message: %w", err)
+		}
+	}
 
 	r.cancel()
 	r.stop()
@@ -790,17 +800,21 @@ func (r *Reader) Close() error {
 // If more fine-grained control of when offsets are committed is required, it
 // is recommended to use FetchMessage with CommitMessages instead.
 func (r *Reader) ReadMessage(ctx context.Context) (Message, error) {
+	// Commit the last message (if any) before fetching the next
+	if !r.lastMessage.IsEmpty() && r.useConsumerGroup() { // Use the helper method
+		if err := r.CommitMessages(ctx, r.lastMessage); err != nil {
+			return Message{}, fmt.Errorf("committing last message: %w", err)
+		}
+	}
+
+	// Fetch the next message
 	m, err := r.FetchMessage(ctx)
 	if err != nil {
 		return Message{}, fmt.Errorf("fetching message: %w", err)
 	}
 
-	if r.useConsumerGroup() {
-		if err := r.CommitMessages(ctx, m); err != nil {
-			return Message{}, fmt.Errorf("committing message: %w", err)
-		}
-	}
-
+	// Store the fetched message as the last message
+	r.lastMessage = m
 	return m, nil
 }
 
@@ -817,46 +831,40 @@ func (r *Reader) FetchMessage(ctx context.Context) (Message, error) {
 
 	for {
 		r.mutex.Lock()
-
 		if !r.closed && r.version == 0 {
 			r.start(r.getTopicPartitionOffset())
 		}
-
 		version := r.version
 		r.mutex.Unlock()
 
 		select {
 		case <-ctx.Done():
 			return Message{}, ctx.Err()
-
 		case err := <-r.runError:
-			return Message{}, err
-
-		case m, ok := <-r.msgs:
-			if !ok {
+			if errors.Is(err, io.EOF) && r.closed {
 				return Message{}, io.EOF
 			}
-
+			return Message{}, err // Propagate ErrServerUnavailable or other errors
+		case m, ok := <-r.msgs:
+			if !ok {
+				if r.closed {
+					return Message{}, io.EOF
+				}
+				return Message{}, ErrServerUnavailable
+			}
 			if m.version >= version {
 				r.mutex.Lock()
-
 				switch {
 				case m.error != nil:
 				case version == r.version:
 					r.offset = m.message.Offset + 1
 					r.lag = m.watermark - r.offset
 				}
-
 				r.mutex.Unlock()
 
 				if errors.Is(m.error, io.EOF) {
-					// io.EOF is used as a marker to indicate that the stream
-					// has been closed, in case it was received from the inner
-					// reader we don't want to confuse the program and replace
-					// the error with io.ErrUnexpectedEOF.
 					m.error = io.ErrUnexpectedEOF
 				}
-
 				return m.message, m.error
 			}
 		}
@@ -1618,4 +1626,9 @@ func (offset humanOffset) Format(w fmt.State, _ rune) {
 	default:
 		fmt.Fprint(w, strconv.FormatInt(v, 10))
 	}
+}
+
+// Add a helper method to check if a Message is empty
+func (m Message) IsEmpty() bool {
+	return len(m.Key) == 0 && len(m.Value) == 0 && m.Offset == 0
 }

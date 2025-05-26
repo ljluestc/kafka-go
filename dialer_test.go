@@ -15,6 +15,13 @@ import (
 )
 
 func TestDialer(t *testing.T) {
+	ctx := context.Background()
+	client, shutdown := newLocalClient()
+	defer shutdown()
+
+	createTopic(ctx, "test-topic", 1)
+	defer deleteTopic(ctx, "test-topic")
+
 	tests := []struct {
 		scenario string
 		function func(*testing.T, context.Context, *Dialer)
@@ -351,8 +358,10 @@ func TestDialerResolver(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.scenario, func(t *testing.T) {
 			topic := makeTopic()
-			createTopic(t, topic, 1)
-			defer deleteTopic(t, topic)
+			client, shutdown := newLocalClient()
+			defer shutdown()
+			createTopic(ctx, topic, 1)
+			defer deleteTopic(context.Background(), topic)
 
 			d := Dialer{
 				Resolver: &mockResolver{addrs: test.resolver},

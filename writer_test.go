@@ -939,6 +939,72 @@ func testWriterSasl(t *testing.T) {
 	}
 }
 
+func testWriterMetadataTTL(t *testing.T) {
+    topic := makeTopic()
+    createTopic(t, topic, 1)
+    defer deleteTopic(t, topic)
+
+    dialer := &Dialer{
+        Timeout: 30 * time.Second,
+    }
+
+    w := newTestWriter(WriterConfig{
+        Dialer:       dialer,
+        Topic:        topic,
+        Brokers:      []string{"localhost:9092"},
+        WriteTimeout: 30 * time.Second,
+        MetadataTTL:  500 * time.Millisecond, // Short TTL for testing
+    })
+
+    defer w.Close()
+
+    // Write first message
+    msg := Message{Key: []byte("key1"), Value: []byte("Message 1")}
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    err := w.WriteMessages(ctx, msg)
+    if err != nil {
+        t.Errorf("failed to write first message: %v", err)
+        return
+    }
+
+    // Wait for TTL to expire
+    time.Sleep(600 * time.Millisecond)
+
+    // Write second message (should use cached metadata)
+    msg = Message{Key: []byte("key2"), Value: []byte("Message 2")}
+    ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    err = w.WriteMessages(ctx, msg)
+    if err != nil {
+        t.Errorf("failed to write second message: %v", err)
+        return
+    }
+
+    // Verify messages
+    reader := NewReader(ReaderConfig{
+        Brokers: []string{"localhost:9092"},
+        Topic:   topic,
+        Dialer:  dialer,
+    })
+    defer reader.Close()
+
+    expected := []string{"Message 1", "Message 2"}
+    for i := 0; i < 2; i++ {
+        ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+        defer cancel()
+        receivedMsg, err := reader.ReadMessage(ctx)
+        if err != nil {
+            t.Errorf("failed to read message %d: %v", i+1, err)
+            return
+        }
+        if string(receivedMsg.Value) != expected[i] {
+            t.Errorf("expected '%s', got '%s'", expected[i], receivedMsg.Value)
+        }
+    }
+}
+
+
 func testWriterDefaults(t *testing.T) {
 	w := &Writer{}
 	defer w.Close()

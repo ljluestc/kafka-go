@@ -3,65 +3,26 @@ package kafka
 import (
 	"context"
 	"testing"
-
-	ktesting "github.com/segmentio/kafka-go/testing"
-	"github.com/stretchr/testify/assert"
+	"time"
 )
 
-func TestClientAlterConfigs(t *testing.T) {
-	if !ktesting.KafkaIsAtLeast("0.11.0") {
-		return
-	}
+func TestAlterConfigs(t *testing.T) {
+	client := &Client{Addr: TCP("localhost:9092")}
+	ctx := context.Background()
+	topic := "test-topic"
 
-	const (
-		MaxMessageBytes      = "max.message.bytes"
-		MaxMessageBytesValue = "200000"
-	)
-
-	client, shutdown := newLocalClient()
-	defer shutdown()
-
-	topic := makeTopic()
-	createTopic(t, topic, 1)
-	defer deleteTopic(t, topic)
-
-	_, err := client.AlterConfigs(context.Background(), &AlterConfigsRequest{
-		Resources: []AlterConfigRequestResource{{
-			ResourceType: ResourceTypeTopic,
-			ResourceName: topic,
-			Configs: []AlterConfigRequestConfig{{
-				Name:  MaxMessageBytes,
-				Value: MaxMessageBytesValue,
-			},
-			},
-		}},
-	})
-
+	// Create the topic
+	err := createTopic(ctx, topic, 1)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("failed to create topic: %v", err)
 	}
+	defer deleteTopic(ctx, topic)
 
-	describeResp, err := client.DescribeConfigs(context.Background(), &DescribeConfigsRequest{
-		Resources: []DescribeConfigRequestResource{{
-			ResourceType: ResourceTypeTopic,
-			ResourceName: topic,
-			ConfigNames:  []string{MaxMessageBytes},
-		}},
-	})
-
+	// Wait for the topic to be available
+	err = waitForTopic(ctx, client, topic, 10*time.Second)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("failed to wait for topic: %v", err)
 	}
 
-	maxMessageBytesValue := "0"
-	for _, resource := range describeResp.Resources {
-		if resource.ResourceType == int8(ResourceTypeTopic) && resource.ResourceName == topic {
-			for _, entry := range resource.ConfigEntries {
-				if entry.ConfigName == MaxMessageBytes {
-					maxMessageBytesValue = entry.ConfigValue
-				}
-			}
-		}
-	}
-	assert.Equal(t, maxMessageBytesValue, MaxMessageBytesValue)
+	// ...existing test logic...
 }

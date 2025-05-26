@@ -3,6 +3,7 @@ package kafka
 import (
 	"context"
 	"testing"
+	"time"
 
 	ktesting "github.com/segmentio/kafka-go/testing"
 )
@@ -16,10 +17,12 @@ func TestClientCreatePartitions(t *testing.T) {
 	defer shutdown()
 
 	topic := makeTopic()
-	createTopic(t, topic, 1)
-	defer deleteTopic(t, topic)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	createTopic(ctx, topic, 1)
+	defer deleteTopic(ctx, topic)
 
-	res, err := client.CreatePartitions(context.Background(), &CreatePartitionsRequest{
+	res, err := client.CreatePartitions(ctx, &CreatePartitionsRequest{
 		Topics: []TopicPartitionsConfig{
 			{
 				Name:  topic,
@@ -51,10 +54,12 @@ func TestClientCreatePartitionsNoAssignments(t *testing.T) {
 	defer shutdown()
 
 	topic := makeTopic()
-	createTopic(t, topic, 1)
-	defer deleteTopic(t, topic)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	createTopic(ctx, topic, 1)
+	defer deleteTopic(ctx, topic)
 
-	res, err := client.CreatePartitions(context.Background(), &CreatePartitionsRequest{
+	res, err := client.CreatePartitions(ctx, &CreatePartitionsRequest{
 		Topics: []TopicPartitionsConfig{
 			{
 				Name:  topic,

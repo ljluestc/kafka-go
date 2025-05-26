@@ -23,6 +23,8 @@ var ErrGroupClosed = errors.New("consumer group is closed")
 // Generation's Start function when the context has been closed.
 var ErrGenerationEnded = errors.New("consumer group generation has ended")
 
+var ErrServerUnavailable = errors.New("server unavailable")
+
 const (
 	// defaultProtocolType holds the default protocol type documented in the
 	// kafka protocol
@@ -896,28 +898,83 @@ func makeConnect(config ConsumerGroupConfig) func(dialer *Dialer, brokers ...str
 // coordinator establishes a connection to the coordinator for this consumer
 // group.
 func (cg *ConsumerGroup) coordinator() (coordinator, error) {
-	// NOTE : could try to cache the coordinator to avoid the double connect
-	//        here.  since consumer group balances happen infrequently and are
-	//        an expensive operation, we're not currently optimizing that case
-	//        in order to keep the code simpler.
-	conn, err := cg.config.connect(cg.config.Dialer, cg.config.Brokers...)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
+	const maxRetries = 3
+	const retryBackoff = 100 * time.Millisecond
 
-	out, err := conn.findCoordinator(findCoordinatorRequestV0{
-		CoordinatorKey: cg.config.ID,
-	})
-	if err == nil && out.ErrorCode != 0 {
-		err = Error(out.ErrorCode)
-	}
-	if err != nil {
-		return nil, err
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		conn, err := cg.config.connect(cg.config.Dialer, cg.config.Brokers...)
+		if err != nil {
+			cg.withErrorLogger(func(log Logger) {
+				log.Printf("Failed to connect to broker (attempt %d/%d): %v", attempt+1, maxRetries, err)
+			})
+			if errors.Is(err, io.EOF) || isNetworkError(err) {
+				lastErr = ErrServerUnavailable
+			} else {
+				lastErr = fmt.Errorf("failed to connect to broker: %w", err)
+			}
+			time.Sleep(retryBackoff * time.Duration(attempt+1))
+			continue
+		}
+
+		tt, _ := conn.(*timeoutCoordinator)
+		defer conn.Close()
+
+		cg.withLogger(func(log Logger) {
+			log.Printf("Connected to coordinator at %s (local: %s)", tt.conn.conn.RemoteAddr().String(), tt.conn.conn.LocalAddr().String())
+		})
+
+		out, err := conn.findCoordinator(findCoordinatorRequestV0{
+			CoordinatorKey: cg.config.ID,
+		})
+		if err != nil {
+			cg.withErrorLogger(func(log Logger) {
+				log.Printf("findCoordinator failed (attempt %d/%d): %v", attempt+1, maxRetries, err)
+			})
+			if errors.Is(err, io.EOF) || isNetworkError(err) {
+				lastErr = ErrServerUnavailable
+			} else {
+				lastErr = fmt.Errorf("failed to find coordinator: %w", err)
+			}
+			conn.Close()
+			time.Sleep(retryBackoff * time.Duration(attempt+1))
+			continue
+		}
+		if out.ErrorCode != 0 {
+			err = Error(out.ErrorCode)
+			cg.withErrorLogger(func(log Logger) {
+				log.Printf("findCoordinator returned error code %d: %v", out.ErrorCode, err)
+			})
+			lastErr = err
+			conn.Close()
+			time.Sleep(retryBackoff * time.Duration(attempt+1))
+			continue
+		}
+
+		address := net.JoinHostPort(out.Coordinator.Host, strconv.Itoa(int(out.Coordinator.Port)))
+		conn, err = cg.config.connect(cg.config.Dialer, address)
+		if err != nil {
+			cg.withErrorLogger(func(log Logger) {
+				log.Printf("Failed to connect to coordinator at %s (attempt %d/%d): %v", address, attempt+1, maxRetries, err)
+			})
+			if errors.Is(err, io.EOF) || isNetworkError(err) {
+				lastErr = ErrServerUnavailable
+			} else {
+				lastErr = fmt.Errorf("failed to connect to coordinator: %w", err)
+			}
+			time.Sleep(retryBackoff * time.Duration(attempt+1))
+			continue
+		}
+		return conn, nil
 	}
 
-	address := net.JoinHostPort(out.Coordinator.Host, strconv.Itoa(int(out.Coordinator.Port)))
-	return cg.config.connect(cg.config.Dialer, address)
+	return nil, lastErr
+}
+
+// isNetworkError checks if the error is a network-related error.
+func isNetworkError(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 // joinGroup attempts to join the reader to the consumer group.
@@ -925,12 +982,12 @@ func (cg *ConsumerGroup) coordinator() (coordinator, error) {
 // the leader.  Otherwise, GroupMemberAssignments will be nil.
 //
 // Possible kafka error codes returned:
-//  * GroupLoadInProgress:
-//  * GroupCoordinatorNotAvailable:
-//  * NotCoordinatorForGroup:
-//  * InconsistentGroupProtocol:
-//  * InvalidSessionTimeout:
-//  * GroupAuthorizationFailed:
+//   - GroupLoadInProgress:
+//   - GroupCoordinatorNotAvailable:
+//   - NotCoordinatorForGroup:
+//   - InconsistentGroupProtocol:
+//   - InvalidSessionTimeout:
+//   - GroupAuthorizationFailed:
 func (cg *ConsumerGroup) joinGroup(conn coordinator, memberID string) (string, int32, GroupMemberAssignments, error) {
 	request, err := cg.makeJoinGroupRequestV1(memberID)
 	if err != nil {
@@ -1073,11 +1130,11 @@ func (cg *ConsumerGroup) makeMemberProtocolMetadata(in []joinGroupResponseMember
 // Readers subscriptions topic => partitions
 //
 // Possible kafka error codes returned:
-//  * GroupCoordinatorNotAvailable:
-//  * NotCoordinatorForGroup:
-//  * IllegalGeneration:
-//  * RebalanceInProgress:
-//  * GroupAuthorizationFailed:
+//   - GroupCoordinatorNotAvailable:
+//   - NotCoordinatorForGroup:
+//   - IllegalGeneration:
+//   - RebalanceInProgress:
+//   - GroupAuthorizationFailed:
 func (cg *ConsumerGroup) syncGroup(conn coordinator, memberID string, generationID int32, memberAssignments GroupMemberAssignments) (map[string][]int32, error) {
 	request := cg.makeSyncGroupRequestV0(memberID, generationID, memberAssignments)
 	response, err := conn.syncGroup(request)

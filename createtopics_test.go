@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestConnCreateTopics(t *testing.T) {
@@ -81,7 +82,9 @@ func TestConnCreateTopics(t *testing.T) {
 		t.Fatalf("expected invalid request: %v", err)
 	}
 
-	deleteTopic(t, topic1)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	deleteTopic(ctx, topic1) // pass nil client for Conn‐based helper
 }
 
 func TestClientCreateTopics(t *testing.T) {
@@ -139,7 +142,11 @@ func TestClientCreateTopics(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer deleteTopic(t, topic1, topic2, topic3)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	defer deleteTopic(ctx, topic1)
+	defer deleteTopic(ctx, topic2)
+	defer deleteTopic(ctx, topic3)
 
 	expectTopics := map[string]struct{}{
 		topic1: {},

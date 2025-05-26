@@ -12,21 +12,18 @@ import (
 
 func TestClientDescribeGroups(t *testing.T) {
 	if os.Getenv("KAFKA_VERSION") == "2.3.1" {
-		// There's a bug in 2.3.1 that causes the MemberMetadata to be in the wrong format and thus
-		// leads to an error when decoding the DescribeGroupsResponse.
-		//
-		// See https://issues.apache.org/jira/browse/KAFKA-9150 for details.
 		t.Skip("Skipping because kafka version is 2.3.1")
 	}
 
+	ctx := context.Background()
 	client, shutdown := newLocalClient()
 	defer shutdown()
 
 	topic := makeTopic()
 	gid := fmt.Sprintf("%s-test-group", topic)
 
-	createTopic(t, topic, 2)
-	defer deleteTopic(t, topic)
+	createTopic(ctx, topic, 2)
+	defer deleteTopic(ctx, topic)
 
 	w := newTestWriter(WriterConfig{
 		Topic: topic,
@@ -127,4 +124,15 @@ func TestClientDescribeGroups(t *testing.T) {
 			"got", mt.Partitions,
 		)
 	}
+}
+
+func TestDescribeGroups(t *testing.T) {
+	ctx := context.Background()
+	client, shutdown := newLocalClient()
+	defer shutdown()
+
+	createTopic(ctx, "test-topic", 1)
+	deleteTopic(ctx, "test-topic")
+
+	// ...existing code...
 }

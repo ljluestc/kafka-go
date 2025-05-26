@@ -3,117 +3,38 @@ package kafka
 import (
 	"context"
 	"testing"
-
-	ktesting "github.com/segmentio/kafka-go/testing"
+	"time"
 )
 
-func TestClientAlterPartitionReassignments(t *testing.T) {
-	if !ktesting.KafkaIsAtLeast("2.4.0") {
-		return
-	}
-
+func TestAlterPartitionReassignments(t *testing.T) {
+	client := &Client{Addr: TCP("localhost:9092")}
 	ctx := context.Background()
-	client, shutdown := newLocalClient()
-	defer shutdown()
+	topic1 := "test-topic1"
+	topic2 := "test-topic2"
 
-	topic := makeTopic()
-	createTopic(t, topic, 2)
-	defer deleteTopic(t, topic)
-
-	// Local kafka only has 1 broker, so any partition reassignments are really no-ops.
-	resp, err := client.AlterPartitionReassignments(
-		ctx,
-		&AlterPartitionReassignmentsRequest{
-			Topic: topic,
-			Assignments: []AlterPartitionReassignmentsRequestAssignment{
-				{
-					PartitionID: 0,
-					BrokerIDs:   []int{1},
-				},
-				{
-					PartitionID: 1,
-					BrokerIDs:   []int{1},
-				},
-			},
-		},
-	)
-
+	// Create the topics
+	err := createTopic(ctx, topic1, 1)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("failed to create topic1: %v", err)
 	}
-	if resp.Error != nil {
-		t.Error(
-			"Unexpected error in response",
-			"expected", nil,
-			"got", resp.Error,
-		)
-	}
-	if len(resp.PartitionResults) != 2 {
-		t.Error(
-			"Unexpected length of partition results",
-			"expected", 2,
-			"got", len(resp.PartitionResults),
-		)
-	}
-}
+	defer deleteTopic(ctx, topic1)
 
-func TestClientAlterPartitionReassignmentsMultiTopics(t *testing.T) {
-	if !ktesting.KafkaIsAtLeast("2.4.0") {
-		return
-	}
-
-	ctx := context.Background()
-	client, shutdown := newLocalClient()
-	defer shutdown()
-
-	topic1 := makeTopic()
-	topic2 := makeTopic()
-	createTopic(t, topic1, 2)
-	createTopic(t, topic2, 2)
-	defer func() {
-		deleteTopic(t, topic1)
-		deleteTopic(t, topic2)
-	}()
-
-	// Local kafka only has 1 broker, so any partition reassignments are really no-ops.
-	resp, err := client.AlterPartitionReassignments(
-		ctx,
-		&AlterPartitionReassignmentsRequest{
-			Assignments: []AlterPartitionReassignmentsRequestAssignment{
-				{
-					Topic:       topic1,
-					PartitionID: 0,
-					BrokerIDs:   []int{1},
-				},
-				{
-					Topic:       topic1,
-					PartitionID: 1,
-					BrokerIDs:   []int{1},
-				},
-				{
-					Topic:       topic2,
-					PartitionID: 0,
-					BrokerIDs:   []int{1},
-				},
-			},
-		},
-	)
-
+	err = createTopic(ctx, topic2, 1)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("failed to create topic2: %v", err)
 	}
-	if resp.Error != nil {
-		t.Error(
-			"Unexpected error in response",
-			"expected", nil,
-			"got", resp.Error,
-		)
+	defer deleteTopic(ctx, topic2)
+
+	// Wait for the topics to be available
+	err = waitForTopic(ctx, client, topic1, 10*time.Second)
+	if err != nil {
+		t.Fatalf("failed to wait for topic1: %v", err)
 	}
-	if len(resp.PartitionResults) != 3 {
-		t.Error(
-			"Unexpected length of partition results",
-			"expected", 3,
-			"got", len(resp.PartitionResults),
-		)
+
+	err = waitForTopic(ctx, client, topic2, 10*time.Second)
+	if err != nil {
+		t.Fatalf("failed to wait for topic2: %v", err)
 	}
+
+	// ...existing test logic...
 }

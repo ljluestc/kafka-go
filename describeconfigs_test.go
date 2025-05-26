@@ -3,6 +3,7 @@ package kafka
 import (
 	"context"
 	"testing"
+	"time"
 
 	ktesting "github.com/segmentio/kafka-go/testing"
 	"github.com/stretchr/testify/assert"
@@ -22,8 +23,10 @@ func TestClientDescribeConfigs(t *testing.T) {
 	defer shutdown()
 
 	topic := makeTopic()
-	createTopic(t, topic, 1)
-	defer deleteTopic(t, topic)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	createTopic(ctx, topic, 1)
+	defer deleteTopic(ctx, topic)
 
 	_, err := client.AlterConfigs(context.Background(), &AlterConfigsRequest{
 		Resources: []AlterConfigRequestResource{{

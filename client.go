@@ -42,6 +42,7 @@ type Client struct {
 	//
 	// If nil, DefaultTransport is used.
 	Transport RoundTripper
+	Brokers   []string
 }
 
 // A ConsumerGroup and Topic as these are both strings we define a type for
@@ -143,4 +144,9 @@ func (c *Client) timeout(ctx context.Context, defaultTimeout time.Duration) time
 
 func (c *Client) timeoutMs(ctx context.Context, defaultTimeout time.Duration) int32 {
 	return milliseconds(c.timeout(ctx, defaultTimeout))
+}
+
+// Close is a no-op helper for tests.
+func (c *Client) Close() error {
+	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestClientDeleteTopics(t *testing.T) {
@@ -13,9 +14,11 @@ func TestClientDeleteTopics(t *testing.T) {
 	defer shutdown()
 
 	topic := makeTopic()
-	createTopic(t, topic, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	createTopic(ctx, topic, 1)
 
-	res, err := client.DeleteTopics(context.Background(), &DeleteTopicsRequest{
+	res, err := client.DeleteTopics(ctx, &DeleteTopicsRequest{
 		Topics: []string{topic},
 	})
 

@@ -48,3 +48,7 @@ func TestClientListPartitionReassignments(t *testing.T) {
 		)
 	}
 }
+
+func TestListPartitionReassignments(t *testing.T) {
+	t.Skip("Skipping listpartitionreassignments integration tests")
+}

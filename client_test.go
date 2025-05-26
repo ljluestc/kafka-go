@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand"
 	"net"
@@ -301,4 +302,15 @@ func TestClientProduceAndConsume(t *testing.T) {
 	}
 
 	t.Logf("%d records were read in %d fetches", numRecords, numFetches)
+}
+
+func makeTestSequence(totalMessages int) []Message {
+	messages := make([]Message, totalMessages)
+	for i := 0; i < totalMessages; i++ {
+		messages[i] = Message{
+			Key:   []byte(fmt.Sprintf("key-%d", i)),
+			Value: []byte(fmt.Sprintf("value-%d", i)),
+		}
+	}
+	return messages
 }

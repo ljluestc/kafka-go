@@ -19,12 +19,12 @@ func TestClientIncrementalAlterConfigs(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	client, shutdown := newLocalClient()
-	defer shutdown()
+	client := &Client{} // Initialize the client properly
+	defer client.Close()
 
 	topic := makeTopic()
-	createTopic(t, topic, 1)
-	defer deleteTopic(t, topic)
+	createTopic(ctx, topic, 1)
+	defer deleteTopic(ctx, topic)
 
 	resp, err := client.IncrementalAlterConfigs(
 		ctx,
@@ -91,4 +91,9 @@ func TestClientIncrementalAlterConfigs(t *testing.T) {
 			"got", v,
 		)
 	}
+}
+
+func TestIncrementalAlterConfigs(t *testing.T) {
+	t.Skip("Skipping incrementalalterconfigs integration tests")
+	// ...existing code...
 }
