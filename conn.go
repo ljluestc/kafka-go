@@ -17,6 +17,7 @@ import (
 var (
 	errInvalidWriteTopic     = errors.New("writes must NOT set Topic on kafka.Message")
 	errInvalidWritePartition = errors.New("writes must NOT set Partition on kafka.Message")
+	errShortRead             = errors.New("short read")
 )
 
 // Conn represents a connection to a kafka broker.
@@ -1642,4 +1643,38 @@ func (c *Conn) saslAuthenticate(data []byte) ([]byte, error) {
 
 	resp, _, err := readNewBytes(&c.rbuf, int(respLen), int(respLen))
 	return resp, err
+}
+
+// readFull reads exactly len(p) bytes into p from the connection.
+func (c *Conn) readFull(ctx context.Context, p []byte) (int, error) {
+	n, err := io.ReadFull(c.rbuf, p)
+	if err != nil {
+		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+			return n, fmt.Errorf("failed to read %d bytes from connection to %s: %w", len(p), c.raddr, errShortRead)
+		}
+		return n, err
+	}
+	return n, nil
+}
+
+// readInt32 reads a 32-bit integer from the connection.
+func (c *Conn) readInt32(ctx context.Context) (int32, error) {
+	b := c.rbufBuf[:4]
+	if _, err := c.readFull(ctx, b); err != nil {
+		return 0, fmt.Errorf("reading int32 from connection to %s: %w", c.raddr, err)
+	}
+	return int32(binary.BigEndian.Uint32(b)), nil
+}
+
+// readResponse reads a response of a given size.
+func (c *Conn) readResponse(ctx context.Context, size int32) ([]byte, error) {
+	b := make([]byte, size)
+	n, err := c.readFull(ctx, b)
+	if err != nil {
+		if errors.Is(err, errShortRead) {
+			return nil, fmt.Errorf("short read while reading response of size %d from %s: %w", size, c.raddr, err)
+		}
+		return nil, err
+	}
+	return b, nil
 }
